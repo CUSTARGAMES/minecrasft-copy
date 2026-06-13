@@ -1,0 +1,29 @@
+name: Build Minecraft3D.exe
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup MinGW
+      run: |
+        choco install mingw -y
+        echo "C:\mingw64\bin" >> $env:GITHUB_PATH
+    
+    - name: Compile Minecraft3D
+      run: |
+        gcc -o minecraft3d.exe minecraft3d.c -lopengl32 -lglu32 -lm -mwindows -O3 -Wall
+    
+    - name: Upload EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: minecraft3d-windows
+        path: minecraft3d.exe
