@@ -1,29 +1,38 @@
-name: Build Minecraft3D.exe
+name: Build Minecraft
 
 on:
   push:
-    branches: [ main, master ]
-  workflow_dispatch:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v3
     
-    - name: Setup MinGW
+    - name: Install dependencies
       run: |
-        choco install mingw -y
-        echo "C:\mingw64\bin" >> $env:GITHUB_PATH
+        sudo apt-get update
+        sudo apt-get install -y libglfw3-dev libgl1-mesa-dev libxi-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev
     
-    - name: Compile Minecraft3D
+    - name: Install raylib
       run: |
-        gcc -o minecraft3d.exe minecraft3d.c -lopengl32 -lglu32 -lm -mwindows -O3 -Wall
+        git clone https://github.com/raysan5/raylib.git
+        cd raylib
+        mkdir build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Release ..
+        make -j$(nproc)
+        sudo make install
     
-    - name: Upload EXE
-      uses: actions/upload-artifact@v4
+    - name: Build
+      run: |
+        gcc -o minecraft minecraft.c -lraylib -lm -lglfw -lGL -lX11 -lpthread -ldl -lrt
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
       with:
-        name: minecraft3d-windows
-        path: minecraft3d.exe
+        name: minecraft-linux
+        path: minecraft
