@@ -49,6 +49,7 @@ Player player = {
 //  TEXTURE
 // ============================================================
 Texture2D grassTexture;
+Material blockMaterial;
 
 // ============================================================
 //  FUNCTIONS
@@ -92,8 +93,8 @@ bool isSolid(int x, int y, int z) {
 void drawBlock(int x, int y, int z) {
     Vector3 pos = {x + 0.5f, y + 0.5f, z + 0.5f};
     
-    // Draw cube with texture
-    DrawCubeTexture(grassTexture, pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
+    // Draw cube with material (texture)
+    DrawCubeV(pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
     
     // Draw wireframe outline (very light)
     DrawCubeWiresV(pos, (Vector3){1.0f, 1.0f, 1.0f}, (Color){0, 0, 0, 30});
