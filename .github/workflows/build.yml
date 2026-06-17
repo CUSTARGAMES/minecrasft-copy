@@ -1,4 +1,4 @@
-name: Build Minecraft
+name: Build Minecraft (Windows + Linux)
 
 on:
   push:
@@ -7,7 +7,50 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build-windows:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [win32, win64]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y mingw-w64 mingw-w64-tools
+    
+    - name: Download raylib source
+      run: |
+        git clone https://github.com/raysan5/raylib.git
+        cd raylib
+        git checkout 4.5.0
+    
+    - name: Build raylib for Windows
+      run: |
+        cd raylib/src
+        if [ "${{ matrix.platform }}" = "win32" ]; then
+          make PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC CC=i686-w64-mingw32-gcc
+        else
+          make PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC CC=x86_64-w64-mingw32-gcc
+        fi
+    
+    - name: Build game for Windows
+      run: |
+        if [ "${{ matrix.platform }}" = "win32" ]; then
+          i686-w64-mingw32-gcc -o minecraft.exe minecraft.c -I./raylib/src -L./raylib/src -lraylib -lm -lopengl32 -lgdi32 -lwinmm -static
+        else
+          x86_64-w64-mingw32-gcc -o minecraft.exe minecraft.c -I./raylib/src -L./raylib/src -lraylib -lm -lopengl32 -lgdi32 -lwinmm -static
+        fi
+    
+    - name: Upload Windows EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: minecraft-windows-${{ matrix.platform }}
+        path: minecraft.exe
+
+  build-linux:
     runs-on: ubuntu-latest
     
     steps:
@@ -27,14 +70,12 @@ jobs:
         make -j$(nproc)
         sudo make install
     
-    - name: Build
+    - name: Build for Linux
       run: |
-        gcc -o minecraft minecraft.c -lraylib -lm -lglfw -lGL -lX11 -lpthread -ldl -lrt
+        gcc -o minecraft-linux minecraft.c -lraylib -lm -lglfw -lGL -lX11 -lpthread -ldl -lrt
     
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4  # Updated to v4
+    - name: Upload Linux binary
+      uses: actions/upload-artifact@v4
       with:
         name: minecraft-linux
-        path: minecraft
-        compression-level: 0  # Optional: faster upload for binary
-        overwrite: true       # Optional: overwrite if exists
+        path: minecraft-linux
