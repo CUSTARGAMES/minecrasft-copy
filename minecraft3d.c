@@ -1,655 +1,379 @@
-// minecraft3d.c - Minecraft-style block engine with ray tracer
-// Compile: gcc -o minecraft3d.exe minecraft3d.c -lopengl32 -lglu32 -lm -mwindows
+// ============================================================
+//  MINECRAFT EARLY DAYS - Raylib Version
+//  Compile: gcc -o minecraft minecraft.c -lraylib -lm
+//  Or with CMake: see CMakeLists.txt below
+// ============================================================
 
-#include <windows.h>
-#include <GL/gl.h>
-#include <GL/glu.h>
+#include "raylib.h"
 #include <math.h>
 #include <stdlib.h>
-#include <stdio.h>
-#include <time.h>
+#include <string.h>
 
-// ============================================================================
-// BLOCK DATA
-// ============================================================================
-#define WORLD_WIDTH 32
-#define WORLD_HEIGHT 16
-#define WORLD_DEPTH 32
+// ============================================================
+//  CONSTANTS
+// ============================================================
+#define WORLD_SIZE 32
+#define BLOCK_SIZE 1.0f
+#define GRAVITY -25.0f
+#define JUMP_SPEED 8.0f
+#define PLAYER_SPEED 4.5f
+#define PLAYER_HEIGHT 1.62f
+#define MOUSE_SENSITIVITY 0.002f
 
+// ============================================================
+//  WORLD DATA
+// ============================================================
+int world[WORLD_SIZE][WORLD_SIZE];
+
+// ============================================================
+//  PLAYER STRUCT
+// ============================================================
 typedef struct {
-    unsigned char type; // 0=air, 1=grass, 2=dirt, 3=stone, 4=wood, 5=leaf
-    unsigned char light;
-} Block;
+    Vector3 position;
+    Vector3 velocity;
+    float yaw;
+    float pitch;
+    bool onGround;
+    bool cursorLocked;
+} Player;
 
-Block g_world[WORLD_WIDTH][WORLD_HEIGHT][WORLD_DEPTH];
-
-// ============================================================================
-// MATH
-// ============================================================================
-typedef struct { float x, y, z; } Vec3;
-typedef struct { float x, y; } Vec2;
-
-Vec3 vec3(float x, float y, float z) { Vec3 v = {x, y, z}; return v; }
-Vec3 add(Vec3 a, Vec3 b) { return vec3(a.x+b.x, a.y+b.y, a.z+b.z); }
-Vec3 sub(Vec3 a, Vec3 b) { return vec3(a.x-b.x, a.y-b.y, a.z-b.z); }
-Vec3 mul(Vec3 v, float s) { return vec3(v.x*s, v.y*s, v.z*s); }
-float dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
-Vec3 cross(Vec3 a, Vec3 b) { return vec3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x); }
-Vec3 normalize(Vec3 v) { float len = sqrt(dot(v,v)); if(len<0.0001) return vec3(0,0,0); return mul(v, 1.0f/len); }
-
-// ============================================================================
-// GLOBALS
-// ============================================================================
-HWND g_hwnd;
-HDC g_hdc;
-HGLRC g_hrc;
-int g_width = 1024;
-int g_height = 768;
-
-// Camera (FIXED CONTROLS)
-float g_camX = 16, g_camY = 5, g_camZ = 16;
-float g_camAngleX = 0, g_camAngleY = 0;
-int g_keys[256] = {0};
-int g_mouseX = 512, g_mouseY = 384;
-int g_firstMouse = 1;
-
-// Ray tracing mode
-int g_rendering = 0;
-float g_renderProgress = 0;
-int g_renderWidth = 1280;
-int g_renderHeight = 720;
-
-// Block textures (simulated colors)
-Vec3 g_blockColors[6] = {
-    {0.0, 0.0, 0.0},       // 0: air
-    {0.4, 0.8, 0.2},       // 1: grass (top)
-    {0.6, 0.4, 0.2},       // 2: dirt
-    {0.5, 0.5, 0.5},       // 3: stone
-    {0.6, 0.4, 0.1},       // 4: wood
-    {0.2, 0.6, 0.1}        // 5: leaf
+Player player = {
+    .position = {WORLD_SIZE/2.0f, 0, WORLD_SIZE/2.0f},
+    .velocity = {0, 0, 0},
+    .yaw = 0,
+    .pitch = 0,
+    .onGround = false,
+    .cursorLocked = false
 };
 
-// ============================================================================
-// WORLD GENERATION
-// ============================================================================
+// ============================================================
+//  TEXTURE
+// ============================================================
+Texture2D grassTexture;
+
+// ============================================================
+//  FUNCTIONS
+// ============================================================
+float getHeight(int x, int z) {
+    float h = 0;
+    h += sinf(x * 0.25f + z * 0.15f) * 0.8f;
+    h += cosf(z * 0.2f - x * 0.1f) * 0.6f;
+    h += sinf((x + z) * 0.15f) * 0.5f;
+    h += cosf(x * 0.4f + z * 0.6f) * 0.3f;
+    
+    // Flatten edges
+    int edge = 4;
+    if (x < edge) h -= (edge - x) * 0.5f;
+    if (x > WORLD_SIZE - edge) h -= (x - (WORLD_SIZE - edge)) * 0.5f;
+    if (z < edge) h -= (edge - z) * 0.5f;
+    if (z > WORLD_SIZE - edge) h -= (z - (WORLD_SIZE - edge)) * 0.5f;
+    
+    return h > 0 ? h + 2 : 2;
+}
+
 void generateWorld() {
-    // Clear world
-    for(int x = 0; x < WORLD_WIDTH; x++)
-        for(int y = 0; y < WORLD_HEIGHT; y++)
-            for(int z = 0; z < WORLD_DEPTH; z++)
-                g_world[x][y][z].type = 0;
-    
-    // Generate terrain using simplex-like noise (simple version)
-    srand(42); // Seed for consistent world
-    
-    for(int x = 0; x < WORLD_WIDTH; x++) {
-        for(int z = 0; z < WORLD_DEPTH; z++) {
-            // Heightmap using sine/cosine for hills
-            float height = 4.0f;
-            height += sin(x * 0.3f) * 1.5f;
-            height += cos(z * 0.3f) * 1.5f;
-            height += sin((x+z) * 0.5f) * 1.0f;
-            height = fmax(2, fmin(10, height));
-            
-            int groundY = (int)height;
-            
-            for(int y = 0; y <= groundY; y++) {
-                if(y == groundY) {
-                    g_world[x][y][z].type = 1; // Grass top
-                } else if(y > groundY - 3) {
-                    g_world[x][y][z].type = 2; // Dirt
-                } else {
-                    g_world[x][y][z].type = 3; // Stone
-                }
-            }
-        }
-    }
-    
-    // Add some trees
-    for(int t = 0; t < 30; t++) {
-        int x = 5 + rand() % (WORLD_WIDTH - 10);
-        int z = 5 + rand() % (WORLD_DEPTH - 10);
-        int groundY = 0;
-        
-        // Find ground height
-        for(int y = WORLD_HEIGHT-1; y >= 0; y--) {
-            if(g_world[x][y][z].type != 0) {
-                groundY = y + 1;
-                break;
-            }
-        }
-        
-        // Tree trunk
-        if(groundY > 0 && groundY < WORLD_HEIGHT-5) {
-            for(int y = 0; y < 4; y++) {
-                if(groundY + y < WORLD_HEIGHT) {
-                    g_world[x][groundY + y][z].type = 4; // Wood
-                }
-            }
-            
-            // Leaves
-            for(int ly = -1; ly <= 2; ly++) {
-                for(int lx = -2; lx <= 2; lx++) {
-                    for(int lz = -2; lz <= 2; lz++) {
-                        int dist = abs(lx) + abs(lz) + abs(ly);
-                        if(dist <= 3 && groundY + 3 + ly < WORLD_HEIGHT) {
-                            int nx = x + lx;
-                            int nz = z + lz;
-                            if(nx >= 0 && nx < WORLD_WIDTH && nz >= 0 && nz < WORLD_DEPTH) {
-                                if(g_world[nx][groundY + 3 + ly][nz].type == 0) {
-                                    g_world[nx][groundY + 3 + ly][nz].type = 5; // Leaf
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // Calculate simple lighting (fake shadows)
-    for(int x = 0; x < WORLD_WIDTH; x++) {
-        for(int z = 0; z < WORLD_DEPTH; z++) {
-            int light = 15;
-            for(int y = WORLD_HEIGHT-1; y >= 0; y--) {
-                if(g_world[x][y][z].type != 0) {
-                    g_world[x][y][z].light = light;
-                    light = (light > 3) ? light - 3 : 0;
-                } else {
-                    g_world[x][y][z].light = light;
-                }
-            }
+    for (int x = 0; x < WORLD_SIZE; x++) {
+        for (int z = 0; z < WORLD_SIZE; z++) {
+            world[x][z] = (int)roundf(getHeight(x, z));
         }
     }
 }
 
-// ============================================================================
-// BLOCK RENDERING (Real-time preview)
-// ============================================================================
-void drawBlock(float x, float y, float z, int type, int light) {
-    Vec3 color = g_blockColors[type];
-    float brightness = 0.3f + (light / 15.0f) * 0.7f;
-    
-    glColor3f(color.x * brightness, color.y * brightness, color.z * brightness);
-    
-    glBegin(GL_QUADS);
-        // Front
-        glVertex3f(x, y, z+1);
-        glVertex3f(x+1, y, z+1);
-        glVertex3f(x+1, y+1, z+1);
-        glVertex3f(x, y+1, z+1);
-        
-        // Back
-        glVertex3f(x, y, z);
-        glVertex3f(x, y+1, z);
-        glVertex3f(x+1, y+1, z);
-        glVertex3f(x+1, y, z);
-        
-        // Left
-        glVertex3f(x, y, z);
-        glVertex3f(x, y, z+1);
-        glVertex3f(x, y+1, z+1);
-        glVertex3f(x, y+1, z);
-        
-        // Right
-        glVertex3f(x+1, y, z);
-        glVertex3f(x+1, y+1, z);
-        glVertex3f(x+1, y+1, z+1);
-        glVertex3f(x+1, y, z+1);
-        
-        // Top (grass has special color)
-        if(type == 1) {
-            glColor3f(0.3f * brightness, 0.7f * brightness, 0.1f * brightness);
-        }
-        glVertex3f(x, y+1, z);
-        glVertex3f(x, y+1, z+1);
-        glVertex3f(x+1, y+1, z+1);
-        glVertex3f(x+1, y+1, z);
-        
-        // Bottom
-        if(type == 1) glColor3f(0.5f * brightness, 0.3f * brightness, 0.1f * brightness);
-        glVertex3f(x, y, z);
-        glVertex3f(x+1, y, z);
-        glVertex3f(x+1, y, z+1);
-        glVertex3f(x, y, z+1);
-    glEnd();
+int getBlockAt(int x, int y, int z) {
+    if (x < 0 || x >= WORLD_SIZE || z < 0 || z >= WORLD_SIZE) return -1;
+    if (y < 0) return -1;
+    if (y <= world[x][z]) return 1;
+    return -1;
 }
 
-void renderWorld() {
-    // Only render blocks within view distance
-    int viewDist = 12;
+bool isSolid(int x, int y, int z) {
+    return getBlockAt(x, y, z) > 0;
+}
+
+void drawBlock(int x, int y, int z) {
+    Vector3 pos = {x + 0.5f, y + 0.5f, z + 0.5f};
+    DrawCubeV(pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
+    DrawCubeTexture(grassTexture, pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
+    DrawCubeWiresV(pos, (Vector3){1.0f, 1.0f, 1.0f}, (Color){0, 0, 0, 30});
+}
+
+void drawWorld() {
+    int renderDist = 12;
+    int px = (int)floorf(player.position.x);
+    int pz = (int)floorf(player.position.z);
     
-    for(int x = (int)(g_camX - viewDist); x <= (int)(g_camX + viewDist); x++) {
-        if(x < 0 || x >= WORLD_WIDTH) continue;
-        
-        for(int z = (int)(g_camZ - viewDist); z <= (int)(g_camZ + viewDist); z++) {
-            if(z < 0 || z >= WORLD_DEPTH) continue;
+    for (int x = px - renderDist; x < px + renderDist; x++) {
+        for (int z = pz - renderDist; z < pz + renderDist; z++) {
+            if (x < 0 || x >= WORLD_SIZE || z < 0 || z >= WORLD_SIZE) continue;
             
-            for(int y = 0; y < WORLD_HEIGHT; y++) {
-                if(g_world[x][y][z].type != 0) {
-                    // Frustum culling
-                    float dx = x - g_camX;
-                    float dz = z - g_camZ;
-                    float dy = y - g_camY;
-                    float dist = sqrt(dx*dx + dy*dy + dz*dz);
-                    
-                    if(dist < viewDist + 2) {
-                        drawBlock((float)x, (float)y, (float)z, 
-                                  g_world[x][y][z].type, 
-                                  g_world[x][y][z].light);
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ============================================================================
-// RAY TRACED RENDER (Fake shadows Minecraft style)
-// ============================================================================
-typedef struct { Vec3 point, normal; int type; float t; int hit; } Hit;
-
-Hit raycastBlock(Vec3 origin, Vec3 direction) {
-    Hit hit = {0};
-    float bestT = 1000;
-    
-    // Digital Differential Analyzer (DDA) for voxel traversal
-    for(int x = 0; x < WORLD_WIDTH; x++) {
-        for(int z = 0; z < WORLD_DEPTH; z++) {
-            for(int y = 0; y < WORLD_HEIGHT; y++) {
-                if(g_world[x][y][z].type != 0) {
-                    // AABB intersection
-                    Vec3 boxMin = vec3(x, y, z);
-                    Vec3 boxMax = vec3(x+1, y+1, z+1);
-                    
-                    float t1 = (boxMin.x - origin.x) / direction.x;
-                    float t2 = (boxMax.x - origin.x) / direction.x;
-                    float t3 = (boxMin.y - origin.y) / direction.y;
-                    float t4 = (boxMax.y - origin.y) / direction.y;
-                    float t5 = (boxMin.z - origin.z) / direction.z;
-                    float t6 = (boxMax.z - origin.z) / direction.z;
-                    
-                    float tmin = fmax(fmax(fmin(t1, t2), fmin(t3, t4)), fmin(t5, t6));
-                    float tmax = fmin(fmin(fmax(t1, t2), fmax(t3, t4)), fmax(t5, t6));
-                    
-                    if(tmin <= tmax && tmax > 0.001 && tmin < bestT) {
-                        bestT = tmin;
-                        hit.hit = 1;
-                        hit.t = tmin;
-                        hit.type = g_world[x][y][z].type;
-                        hit.point = add(origin, mul(direction, tmin));
-                        
-                        // Calculate normal
-                        if(fabs(hit.point.x - x) < 0.01) hit.normal = vec3(-1,0,0);
-                        else if(fabs(hit.point.x - (x+1)) < 0.01) hit.normal = vec3(1,0,0);
-                        else if(fabs(hit.point.y - y) < 0.01) hit.normal = vec3(0,-1,0);
-                        else if(fabs(hit.point.y - (y+1)) < 0.01) hit.normal = vec3(0,1,0);
-                        else if(fabs(hit.point.z - z) < 0.01) hit.normal = vec3(0,0,-1);
-                        else hit.normal = vec3(0,0,1);
-                    }
-                }
-            }
-        }
-    }
-    
-    return hit;
-}
-
-Vec3 traceBlockRay(Vec3 origin, Vec3 direction, int depth) {
-    if(depth > 3) return vec3(0,0,0);
-    
-    Hit hit = raycastBlock(origin, direction);
-    
-    if(!hit.hit) {
-        // Sky
-        return vec3(0.5, 0.6, 0.8);
-    }
-    
-    Vec3 color = g_blockColors[hit.type];
-    
-    // Fake Minecraft-style shadows
-    float shadow = 0.6f;
-    
-    // Ambient occlusion based on neighbors
-    int x = (int)hit.point.x;
-    int y = (int)hit.point.y;
-    int z = (int)hit.point.z;
-    
-    if(hit.normal.y > 0) {
-        // Top face - brightest
-        shadow = 0.9f;
-    } else if(hit.normal.y < 0) {
-        // Bottom face - darkest
-        shadow = 0.4f;
-    } else {
-        // Side faces
-        shadow = 0.7f;
-        
-        // Simple ambient occlusion
-        int nx = x + (int)hit.normal.x;
-        int nz = z + (int)hit.normal.z;
-        if(nx >= 0 && nx < WORLD_WIDTH && nz >= 0 && nz < WORLD_DEPTH) {
-            if(y < WORLD_HEIGHT-1 && g_world[nx][y+1][nz].type != 0) shadow *= 0.7f;
-            if(y > 0 && g_world[nx][y-1][nz].type != 0) shadow *= 0.8f;
-        }
-    }
-    
-    // Sun light (directional)
-    Vec3 sunDir = normalize(vec3(0.5, 1, 0.3));
-    float sunlight = fmax(0.2, dot(hit.normal, sunDir));
-    shadow *= (0.4f + sunlight * 0.6f);
-    
-    // Sky light from above
-    int lightY = y+1;
-    while(lightY < WORLD_HEIGHT && g_world[x][lightY][z].type == 0) lightY++;
-    float skylight = 1.0f - (lightY - y) / 20.0f;
-    if(skylight < 0.2f) skylight = 0.2f;
-    
-    float brightness = shadow * skylight;
-    if(brightness < 0.15f) brightness = 0.15f;
-    
-    // Special grass top color
-    if(hit.type == 1 && hit.normal.y > 0) {
-        color = vec3(0.4f, 0.85f, 0.25f);
-    }
-    
-    return mul(color, brightness);
-}
-
-void renderHighQuality() {
-    g_rendering = 1;
-    
-    unsigned char* pixels = (unsigned char*)malloc(g_renderWidth * g_renderHeight * 3);
-    
-    Vec3 camPos = vec3(g_camX, g_camY, g_camZ);
-    Vec3 camDir = normalize(vec3(sin(g_camAngleX), sin(g_camAngleY), cos(g_camAngleX)));
-    Vec3 camRight = normalize(cross(camDir, vec3(0,1,0)));
-    Vec3 camUp = normalize(cross(camRight, camDir));
-    
-    float fov = 70.0f * 3.14159f / 180.0f;
-    float aspect = (float)g_renderWidth / g_renderHeight;
-    
-    for(int y = 0; y < g_renderHeight; y++) {
-        if(y % 50 == 0) {
-            g_renderProgress = (float)y / g_renderHeight;
-            InvalidateRect(g_hwnd, NULL, FALSE);
-            MSG msg;
-            while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
-        }
-        
-        for(int x = 0; x < g_renderWidth; x++) {
-            float u = (2.0f * x / g_renderWidth - 1.0f) * tan(fov/2) * aspect;
-            float v = (1.0f - 2.0f * y / g_renderHeight) * tan(fov/2);
-            
-            Vec3 rayDir = normalize(add(add(camDir, mul(camRight, u)), mul(camUp, v)));
-            Vec3 color = traceBlockRay(camPos, rayDir, 0);
-            
-            // Gamma
-            color.x = pow(color.x, 1.0f/2.2f);
-            color.y = pow(color.y, 1.0f/2.2f);
-            color.z = pow(color.z, 1.0f/2.2f);
-            
-            if(color.x > 1) color.x = 1;
-            if(color.y > 1) color.y = 1;
-            if(color.z > 1) color.z = 1;
-            
-            pixels[(y * g_renderWidth + x) * 3 + 0] = (unsigned char)(color.x * 255);
-            pixels[(y * g_renderWidth + x) * 3 + 1] = (unsigned char)(color.y * 255);
-            pixels[(y * g_renderWidth + x) * 3 + 2] = (unsigned char)(color.z * 255);
-        }
-    }
-    
-    // Save BMP
-    BITMAPFILEHEADER bf = {0};
-    BITMAPINFOHEADER bi = {0};
-    bi.biSize = sizeof(BITMAPINFOHEADER);
-    bi.biWidth = g_renderWidth;
-    bi.biHeight = g_renderHeight;
-    bi.biPlanes = 1;
-    bi.biBitCount = 24;
-    bi.biCompression = BI_RGB;
-    
-    bf.bfType = 0x4D42;
-    bf.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-    bf.bfSize = bf.bfOffBits + ((g_renderWidth * 3 + 3) & ~3) * g_renderHeight;
-    
-    char fileName[MAX_PATH] = "minecraft_render.bmp";
-    OPENFILENAME ofn = {0};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g_hwnd;
-    ofn.lpstrFilter = "Bitmap Files\0*.bmp\0";
-    ofn.lpstrFile = fileName;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_OVERWRITEPROMPT;
-    
-    if(GetSaveFileName(&ofn)) {
-        HANDLE hFile = CreateFile(ofn.lpstrFile, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-        if(hFile != INVALID_HANDLE_VALUE) {
-            DWORD written;
-            WriteFile(hFile, &bf, sizeof(bf), &written, NULL);
-            WriteFile(hFile, &bi, sizeof(bi), &written, NULL);
-            
-            for(int y = g_renderHeight-1; y >= 0; y--) {
-                WriteFile(hFile, pixels + y * g_renderWidth * 3, g_renderWidth * 3, &written, NULL);
-                int padding = (4 - (g_renderWidth * 3) % 4) % 4;
-                if(padding) {
-                    char pad[4] = {0};
-                    WriteFile(hFile, pad, padding, &written, NULL);
-                }
-            }
-            CloseHandle(hFile);
-            MessageBox(g_hwnd, "Minecraft render complete!", "3DSoft Minecraft", MB_OK);
-        }
-    }
-    
-    free(pixels);
-    g_rendering = 0;
-    InvalidateRect(g_hwnd, NULL, FALSE);
-}
-
-// ============================================================================
-// RENDERING PREVIEW
-// ============================================================================
-void renderPreview() {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glLoadIdentity();
-    
-    // Camera - FIXED: W=forward, S=backward
-    gluLookAt(g_camX, g_camY, g_camZ,
-              g_camX + sin(g_camAngleX), g_camY + sin(g_camAngleY), g_camZ + cos(g_camAngleX),
-              0, 1, 0);
-    
-    renderWorld();
-    
-    if(g_rendering) {
-        glDisable(GL_DEPTH_TEST);
-        glMatrixMode(GL_PROJECTION);
-        glPushMatrix();
-        glLoadIdentity();
-        glOrtho(0, g_width, 0, g_height, -1, 1);
-        glMatrixMode(GL_MODELVIEW);
-        glPushMatrix();
-        glLoadIdentity();
-        
-        glBegin(GL_QUADS);
-        glColor3f(0,0,0);
-        glVertex2f(g_width/2 - 300, g_height - 80);
-        glVertex2f(g_width/2 + 300, g_height - 80);
-        glVertex2f(g_width/2 + 300, g_height - 60);
-        glVertex2f(g_width/2 - 300, g_height - 60);
-        
-        glColor3f(0.4f, 0.7f, 0.2f);
-        glVertex2f(g_width/2 - 298, g_height - 78);
-        glVertex2f(g_width/2 - 298 + 596 * g_renderProgress, g_height - 78);
-        glVertex2f(g_width/2 - 298 + 596 * g_renderProgress, g_height - 62);
-        glVertex2f(g_width/2 - 298, g_height - 62);
-        glEnd();
-        
-        glPopMatrix();
-        glMatrixMode(GL_PROJECTION);
-        glPopMatrix();
-        glMatrixMode(GL_MODELVIEW);
-        glEnable(GL_DEPTH_TEST);
-    }
-    
-    SwapBuffers(g_hdc);
-}
-
-// ============================================================================
-// INPUT HANDLING (FIXED: W=forward, S=backward)
-// ============================================================================
-void handleInput() {
-    if(g_rendering) return;
-    
-    float speed = 0.1f;
-    float forwardX = sin(g_camAngleX);
-    float forwardZ = cos(g_camAngleX);
-    float rightX = cos(g_camAngleX);
-    float rightZ = -sin(g_camAngleX);
-    
-    // FIXED CONTROLS: W = forward, S = backward
-    if(g_keys['W'] || g_keys['w']) {
-        g_camX += forwardX * speed;
-        g_camZ += forwardZ * speed;
-    }
-    if(g_keys['S'] || g_keys['s']) {
-        g_camX -= forwardX * speed;
-        g_camZ -= forwardZ * speed;
-    }
-    if(g_keys['A'] || g_keys['a']) {
-        g_camX -= rightX * speed;
-        g_camZ -= rightZ * speed;
-    }
-    if(g_keys['D'] || g_keys['d']) {
-        g_camX += rightX * speed;
-        g_camZ += rightZ * speed;
-    }
-    if(g_keys[VK_SPACE]) g_camY += speed;
-    if(g_keys[VK_SHIFT]) g_camY -= speed;
-    
-    // Clamp camera position
-    if(g_camX < 1) g_camX = 1;
-    if(g_camX > WORLD_WIDTH-2) g_camX = WORLD_WIDTH-2;
-    if(g_camZ < 1) g_camZ = 1;
-    if(g_camZ > WORLD_DEPTH-2) g_camZ = WORLD_DEPTH-2;
-    if(g_camY < 1) g_camY = 1;
-    if(g_camY > WORLD_HEIGHT-2) g_camY = WORLD_HEIGHT-2;
-}
-
-// ============================================================================
-// WINDOW PROCEDURE
-// ============================================================================
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    switch(msg) {
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-        case WM_KEYDOWN:
-            g_keys[wParam] = 1;
-            if(wParam == VK_ESCAPE) PostQuitMessage(0);
-            if((wParam == 'R' || wParam == 'r') && !g_rendering) {
-                CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)renderHighQuality, NULL, 0, NULL);
-            }
-            return 0;
-        case WM_KEYUP:
-            g_keys[wParam] = 0;
-            return 0;
-        case WM_MOUSEMOVE:
-            if(!g_rendering) {
-                int x = LOWORD(lParam);
-                int y = HIWORD(lParam);
-                if(g_firstMouse) {
-                    g_mouseX = x; g_mouseY = y;
-                    g_firstMouse = 0;
-                }
-                int dx = x - g_mouseX;
-                int dy = y - g_mouseY;
-                g_camAngleX += dx * 0.005f;
-                g_camAngleY -= dy * 0.003f;
-                if(g_camAngleY > 1.4f) g_camAngleY = 1.4f;
-                if(g_camAngleY < -1.2f) g_camAngleY = -1.2f;
-                g_mouseX = x; g_mouseY = y;
+            int height = world[x][z];
+            for (int y = 0; y <= height; y++) {
+                // Check if block is visible (not fully surrounded)
+                bool visible = false;
                 
-                RECT rect;
-                GetClientRect(hwnd, &rect);
-                if(x <= 10 || x >= rect.right-10 || y <= 10 || y >= rect.bottom-10) {
-                    SetCursorPos(rect.right/2, rect.bottom/2);
-                    g_mouseX = rect.right/2;
-                    g_mouseY = rect.bottom/2;
+                // Check neighbors
+                if (!isSolid(x-1, y, z)) visible = true;
+                if (!isSolid(x+1, y, z)) visible = true;
+                if (!isSolid(x, y-1, z)) visible = true;
+                if (!isSolid(x, y+1, z)) visible = true;
+                if (!isSolid(x, y, z-1)) visible = true;
+                if (!isSolid(x, y, z+1)) visible = true;
+                
+                if (visible) {
+                    drawBlock(x, y, z);
                 }
             }
-            return 0;
-        case WM_SIZE:
-            g_width = LOWORD(lParam);
-            g_height = HIWORD(lParam);
-            glViewport(0, 0, g_width, g_height);
-            glMatrixMode(GL_PROJECTION);
-            glLoadIdentity();
-            gluPerspective(70.0, (double)g_width/g_height, 0.1, 100.0);
-            glMatrixMode(GL_MODELVIEW);
-            return 0;
+        }
     }
-    return DefWindowProc(hwnd, msg, wParam, lParam);
 }
 
-// ============================================================================
-// MAIN
-// ============================================================================
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    WNDCLASS wc = {0};
-    wc.lpfnWndProc = WndProc;
-    wc.hInstance = hInstance;
-    wc.lpszClassName = "Minecraft3D";
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-    RegisterClass(&wc);
+void updatePlayer(float dt) {
+    // Mouse look
+    if (player.cursorLocked) {
+        Vector2 mouseDelta = GetMouseDelta();
+        player.yaw -= mouseDelta.x * MOUSE_SENSITIVITY;
+        player.pitch -= mouseDelta.y * MOUSE_SENSITIVITY;
+        player.pitch = fmaxf(-1.5f, fminf(1.5f, player.pitch));
+    }
     
-    g_hwnd = CreateWindowEx(0, "Minecraft3D", 
-                            "MINECRAFT 3D | WASD to move | Mouse to look | R to render high quality",
-                            WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, g_width, g_height,
-                            NULL, NULL, hInstance, NULL);
+    // Movement
+    Vector3 forward = { -sinf(player.yaw), 0, -cosf(player.yaw) };
+    Vector3 right = { cosf(player.yaw), 0, -sinf(player.yaw) };
     
-    if(!g_hwnd) return 1;
+    Vector3 moveDir = {0, 0, 0};
+    if (IsKeyDown(KEY_W)) { moveDir.x += forward.x; moveDir.z += forward.z; }
+    if (IsKeyDown(KEY_S)) { moveDir.x -= forward.x; moveDir.z -= forward.z; }
+    if (IsKeyDown(KEY_A)) { moveDir.x -= right.x; moveDir.z -= right.z; }
+    if (IsKeyDown(KEY_D)) { moveDir.x += right.x; moveDir.z += right.z; }
     
-    g_hdc = GetDC(g_hwnd);
-    PIXELFORMATDESCRIPTOR pfd = {
-        sizeof(PIXELFORMATDESCRIPTOR), 1,
-        PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
-        PFD_TYPE_RGBA, 32, 0,0,0,0,0,0,0,0,0,0,0,0,0,16,0,0,PFD_MAIN_PLANE,0,0,0,0
-    };
-    SetPixelFormat(g_hdc, ChoosePixelFormat(g_hdc, &pfd), &pfd);
-    g_hrc = wglCreateContext(g_hdc);
-    wglMakeCurrent(g_hdc, g_hrc);
+    if (moveDir.x != 0 || moveDir.z != 0) {
+        float len = sqrtf(moveDir.x * moveDir.x + moveDir.z * moveDir.z);
+        moveDir.x /= len;
+        moveDir.z /= len;
+    }
     
-    glEnable(GL_DEPTH_TEST);
-    glClearColor(0.5f, 0.6f, 0.8f, 1.0f);
+    // Sprint
+    float speed = IsKeyDown(KEY_LEFT_SHIFT) ? 6.0f : PLAYER_SPEED;
+    moveDir.x *= speed * dt;
+    moveDir.z *= speed * dt;
     
+    // Jump
+    if (IsKeyPressed(KEY_SPACE) && player.onGround) {
+        player.velocity.y = JUMP_SPEED;
+        player.onGround = false;
+    }
+    
+    // Gravity
+    player.velocity.y += GRAVITY * dt;
+    if (player.velocity.y < -20.0f) player.velocity.y = -20.0f;
+    
+    // --- Collision Detection ---
+    // X movement
+    float newX = player.position.x + moveDir.x;
+    int bx = (int)floorf(newX);
+    int bz = (int)floorf(player.position.z);
+    int by = (int)floorf(player.position.y);
+    int headY = (int)floorf(player.position.y + PLAYER_HEIGHT);
+    
+    bool canMoveX = true;
+    if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
+        if (isSolid(bx, by, bz)) canMoveX = false;
+        if (isSolid(bx, headY, bz)) canMoveX = false;
+    }
+    if (canMoveX) player.position.x = newX;
+    
+    // Z movement
+    float newZ = player.position.z + moveDir.z;
+    bx = (int)floorf(player.position.x);
+    bz = (int)floorf(newZ);
+    by = (int)floorf(player.position.y);
+    headY = (int)floorf(player.position.y + PLAYER_HEIGHT);
+    
+    bool canMoveZ = true;
+    if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
+        if (isSolid(bx, by, bz)) canMoveZ = false;
+        if (isSolid(bx, headY, bz)) canMoveZ = false;
+    }
+    if (canMoveZ) player.position.z = newZ;
+    
+    // Y movement (gravity)
+    float newY = player.position.y + player.velocity.y * dt;
+    bx = (int)floorf(player.position.x);
+    bz = (int)floorf(player.position.z);
+    by = (int)floorf(newY);
+    headY = (int)floorf(newY + PLAYER_HEIGHT);
+    
+    player.onGround = false;
+    bool canMoveY = true;
+    if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
+        // Check feet
+        if (isSolid(bx, by, bz)) {
+            canMoveY = false;
+            if (player.velocity.y < 0) {
+                player.onGround = true;
+                player.velocity.y = 0;
+                player.position.y = by + 0.5f;
+            }
+        }
+        // Check head
+        if (isSolid(bx, headY, bz)) {
+            canMoveY = false;
+            if (player.velocity.y > 0) {
+                player.velocity.y = 0;
+            }
+        }
+    }
+    
+    if (canMoveY) {
+        player.position.y = newY;
+    }
+    
+    // Keep in bounds
+    player.position.x = fmaxf(0.5f, fminf(WORLD_SIZE - 0.5f, player.position.x));
+    player.position.z = fmaxf(0.5f, fminf(WORLD_SIZE - 0.5f, player.position.z));
+}
+
+// ============================================================
+//  CREATE GRASS TEXTURE (16x16 fallback if PNG fails)
+// ============================================================
+Texture2D createFallbackTexture() {
+    Image image = GenImageColor(16, 16, WHITE);
+    ImageFormat(&image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    Color *pixels = (Color*)image.data;
+    
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+            int i = y * 16 + x;
+            if (y < 6) {
+                int r = 80, g = 140, b = 60;
+                if ((x + y) % 3 == 0) { r = 100; g = 165; b = 70; }
+                if ((x * 2 + y * 3) % 5 == 0) { r = 60; g = 110; b = 45; }
+                if (y < 2) { r += 8; g += 10; b += 5; }
+                pixels[i] = (Color){r, g, b, 255};
+            } else if (y < 8) {
+                int r = 100, g = 95, b = 65;
+                if ((x + y) % 4 == 0) { r = 85; g = 125; b = 60; }
+                pixels[i] = (Color){r, g, b, 255};
+            } else {
+                int r = 115, g = 90, b = 60;
+                if ((x * 3 + y) % 6 == 0) { r += 15; g += 10; b += 5; }
+                if ((x + y) % 5 == 0) { r -= 10; g -= 8; b -= 5; }
+                pixels[i] = (Color){r, g, b, 255};
+            }
+        }
+    }
+    
+    Texture2D tex = LoadTextureFromImage(image);
+    UnloadImage(image);
+    SetTextureFilter(tex, TEXTURE_FILTER_POINT);
+    return tex;
+}
+
+// ============================================================
+//  MAIN
+// ============================================================
+int main() {
+    // Init window
+    const int screenWidth = 1280;
+    const int screenHeight = 720;
+    InitWindow(screenWidth, screenHeight, "⛏️ Minecraft - Early Days");
+    
+    // Cursor
+    DisableCursor();
+    player.cursorLocked = true;
+    
+    // Set camera mode
+    Camera3D camera = {0};
+    camera.up = (Vector3){0, 1, 0};
+    camera.fovy = 70;
+    camera.projection = CAMERA_PERSPECTIVE;
+    
+    // Load texture
+    grassTexture = LoadTexture("grass.png");
+    if (grassTexture.id == 0) {
+        TraceLog(LOG_WARNING, "Failed to load grass.png, using fallback texture");
+        grassTexture = createFallbackTexture();
+    } else {
+        SetTextureFilter(grassTexture, TEXTURE_FILTER_POINT);
+    }
+    
+    // Generate world
     generateWorld();
     
-    // Center mouse
-    RECT rect;
-    GetClientRect(g_hwnd, &rect);
-    SetCursorPos(rect.right/2, rect.bottom/2);
-    ShowCursor(FALSE);
+    // Set player start position
+    int startX = WORLD_SIZE / 2;
+    int startZ = WORLD_SIZE / 2;
+    player.position.x = startX + 0.5f;
+    player.position.z = startZ + 0.5f;
+    player.position.y = world[startX][startZ] + PLAYER_HEIGHT;
     
-    MSG msg;
-    while(1) {
-        while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-            if(msg.message == WM_QUIT) {
-                wglMakeCurrent(NULL, NULL);
-                wglDeleteContext(g_hrc);
-                ReleaseDC(g_hwnd, g_hdc);
-                return 0;
-            }
-            TranslateMessage(&msg);
-            DispatchMessage(&msg);
+    // Fog
+    SetFog(FOG_EXP, (Color){127, 155, 179, 255}, 0.035f, 0, 0);
+    
+    // Main loop
+    SetTargetFPS(60);
+    
+    while (!WindowShouldClose()) {
+        float dt = GetFrameTime();
+        
+        // Update
+        updatePlayer(dt);
+        
+        // Camera follows player
+        camera.position = player.position;
+        camera.position.y += 0.1f; // slight bob
+        camera.target = (Vector3){
+            player.position.x - sinf(player.yaw) * cosf(player.pitch),
+            player.position.y + 0.1f + sinf(player.pitch),
+            player.position.z - cosf(player.yaw) * cosf(player.pitch)
+        };
+        
+        // Toggle cursor with Escape
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            player.cursorLocked = !player.cursorLocked;
+            if (player.cursorLocked) DisableCursor();
+            else EnableCursor();
         }
-        handleInput();
-        renderPreview();
-        Sleep(16);
+        
+        // Click to lock cursor
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !player.cursorLocked) {
+            player.cursorLocked = true;
+            DisableCursor();
+        }
+        
+        // Draw
+        BeginDrawing();
+        ClearBackground((Color){127, 155, 179, 255});
+        
+        BeginMode3D(camera);
+        
+        // Sky fog
+        DrawGrid(0, 0); // Disable grid
+        
+        // Draw world
+        drawWorld();
+        
+        // Fog overlay (subtle)
+        DrawSphere((Vector3){0, 0, 0}, 0, WHITE);
+        
+        EndMode3D();
+        
+        // Crosshair
+        DrawRectangle(screenWidth/2 - 2, screenHeight/2 - 10, 4, 20, (Color){255, 255, 255, 150});
+        DrawRectangle(screenWidth/2 - 10, screenHeight/2 - 2, 20, 4, (Color){255, 255, 255, 150});
+        
+        // HUD
+        DrawText("MINECRAFT EARLY DAYS", 10, 10, 20, (Color){255, 255, 255, 150});
+        DrawText(TextFormat("FPS: %d", GetFPS()), 10, 35, 20, (Color){255, 255, 255, 100});
+        
+        DrawText("WASD: Walk | SPACE: Jump | Shift: Sprint", 10, screenHeight - 30, 20, (Color){200, 210, 220, 200});
+        
+        EndDrawing();
     }
+    
+    // Cleanup
+    UnloadTexture(grassTexture);
+    CloseWindow();
     
     return 0;
 }
