@@ -1,7 +1,6 @@
 // ============================================================
-//  MINECRAFT EARLY DAYS - Raylib Version
+//  MINECRAFT EARLY DAYS - Raylib Version (FIXED)
 //  Compile: gcc -o minecraft minecraft.c -lraylib -lm
-//  Or with CMake: see CMakeLists.txt below
 // ============================================================
 
 #include "raylib.h"
@@ -92,8 +91,11 @@ bool isSolid(int x, int y, int z) {
 
 void drawBlock(int x, int y, int z) {
     Vector3 pos = {x + 0.5f, y + 0.5f, z + 0.5f};
-    DrawCubeV(pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
+    
+    // Draw cube with texture
     DrawCubeTexture(grassTexture, pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
+    
+    // Draw wireframe outline (very light)
     DrawCubeWiresV(pos, (Vector3){1.0f, 1.0f, 1.0f}, (Color){0, 0, 0, 30});
 }
 
@@ -234,7 +236,7 @@ void updatePlayer(float dt) {
 }
 
 // ============================================================
-//  CREATE GRASS TEXTURE (16x16 fallback if PNG fails)
+//  CREATE GRASS TEXTURE (16x16 pixel art - EXACT Minecraft style)
 // ============================================================
 Texture2D createFallbackTexture() {
     Image image = GenImageColor(16, 16, WHITE);
@@ -307,9 +309,6 @@ int main() {
     player.position.z = startZ + 0.5f;
     player.position.y = world[startX][startZ] + PLAYER_HEIGHT;
     
-    // Fog
-    SetFog(FOG_EXP, (Color){127, 155, 179, 255}, 0.035f, 0, 0);
-    
     // Main loop
     SetTargetFPS(60);
     
@@ -347,14 +346,8 @@ int main() {
         
         BeginMode3D(camera);
         
-        // Sky fog
-        DrawGrid(0, 0); // Disable grid
-        
         // Draw world
         drawWorld();
-        
-        // Fog overlay (subtle)
-        DrawSphere((Vector3){0, 0, 0}, 0, WHITE);
         
         EndMode3D();
         
