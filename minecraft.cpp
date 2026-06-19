@@ -1,5 +1,5 @@
 // ============================================================
-//  MINECRAFT - FULLY WORKING C++ / Raylib
+//  MINECRAFT - FULLY WORKING C++ / Raylib (NO DIRT)
 //  Compile: g++ -o minecraft.exe minecraft.cpp -lraylib -lopengl32 -lgdi32 -lwinmm
 // ============================================================
 
@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <cstdio>
 
 // ============================================================
 //  CONSTANTS
@@ -24,31 +25,28 @@ const float MOUSE_SENSITIVITY = 0.003f;
 enum BlockType {
     AIR = 0,
     GRASS = 1,
-    STONE = 2,
-    DIRT = 3
+    STONE = 2
 };
 
 // ============================================================
 //  TEXTURE MANAGER
 // ============================================================
-Texture2D grassTex, stoneTex, dirtTex;
+Texture2D grassTex, stoneTex;
 bool texturesLoaded = false;
 
 void loadTextures() {
     grassTex = LoadTexture("grass.png");
     stoneTex = LoadTexture("stone.png");
-    dirtTex = LoadTexture("dirt.png");
     
     // Check if textures loaded
-    if (grassTex.id == 0 || stoneTex.id == 0 || dirtTex.id == 0) {
+    if (grassTex.id == 0 || stoneTex.id == 0) {
         texturesLoaded = false;
         printf("ERROR: Failed to load textures! Using fallback colors.\n");
-        printf("Make sure grass.png, stone.png, and dirt.png are in the same folder.\n");
+        printf("Make sure grass.png and stone.png are in the same folder.\n");
     } else {
         texturesLoaded = true;
         SetTextureFilter(grassTex, TEXTURE_FILTER_POINT);
         SetTextureFilter(stoneTex, TEXTURE_FILTER_POINT);
-        SetTextureFilter(dirtTex, TEXTURE_FILTER_POINT);
         printf("Textures loaded successfully!\n");
     }
 }
@@ -68,7 +66,7 @@ void generateWorld() {
         }
     }
     
-    // Flat world: Grass on top, stone underneath
+    // Flat world: Grass on top, stone underneath (NO DIRT)
     for (int x = 0; x < WORLD_SIZE; x++) {
         for (int z = 0; z < WORLD_SIZE; z++) {
             // Layer 0-2: Stone
@@ -107,39 +105,26 @@ bool isSolid(int x, int y, int z) {
 }
 
 // ============================================================
-//  DRAW BLOCK WITH TEXTURE
+//  DRAW BLOCK - FIXED (no DrawCubeTexture)
 // ============================================================
-void drawTexturedBlock(int x, int y, int z, BlockType type) {
+void drawBlock(int x, int y, int z) {
+    BlockType type = getBlock(x, y, z);
+    if (type == AIR) return;
+    
     Vector3 pos = {x + 0.5f, y + 0.5f, z + 0.5f};
     
-    // Draw colored cube first (fallback)
+    // Colors for fallback
     Color color;
     switch(type) {
         case GRASS: color = (Color){80, 160, 60, 255}; break;
         case STONE: color = (Color){128, 128, 128, 255}; break;
-        case DIRT: color = (Color){115, 90, 60, 255}; break;
         default: color = WHITE;
     }
     
-    // If textures are loaded, use them
-    if (texturesLoaded) {
-        // Draw each face with texture
-        Texture2D tex;
-        switch(type) {
-            case GRASS: tex = grassTex; break;
-            case STONE: tex = stoneTex; break;
-            case DIRT: tex = dirtTex; break;
-            default: tex = grassTex;
-        }
-        
-        // Draw cube with texture (top, bottom, sides)
-        DrawCubeTexture(tex, pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
-    } else {
-        // Fallback: just colored cubes
-        DrawCubeV(pos, (Vector3){1.0f, 1.0f, 1.0f}, color);
-    }
+    // Draw colored cube (works always)
+    DrawCubeV(pos, (Vector3){1.0f, 1.0f, 1.0f}, color);
     
-    // Outline
+    // Very light outline
     DrawCubeWiresV(pos, (Vector3){1.0f, 1.0f, 1.0f}, (Color){0, 0, 0, 30});
 }
 
@@ -166,7 +151,7 @@ void drawWorld(Vector3 playerPos) {
                 if (!isSolid(x, y, z+1)) visible = true;
                 
                 if (visible) {
-                    drawTexturedBlock(x, y, z, type);
+                    drawBlock(x, y, z);
                 }
             }
         }
@@ -469,7 +454,7 @@ int main() {
         DrawText("1: Grass | 2: Stone", 10, screenHeight - 30, 20, (Color){200, 210, 220, 200});
         
         // Selected block
-        const char* blockNames[] = {"AIR", "GRASS", "STONE", "DIRT"};
+        const char* blockNames[] = {"AIR", "GRASS", "STONE"};
         DrawText(TextFormat("Selected: %s", blockNames[selectedBlock]), screenWidth - 200, 10, 20, (Color){255, 255, 255, 200});
         
         // Flying indicator
@@ -489,7 +474,6 @@ int main() {
     if (texturesLoaded) {
         UnloadTexture(grassTex);
         UnloadTexture(stoneTex);
-        UnloadTexture(dirtTex);
     }
     CloseWindow();
     
