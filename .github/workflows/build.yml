@@ -9,45 +9,31 @@ on:
 jobs:
   build-windows:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        platform: [win32, win64]
     
     steps:
     - uses: actions/checkout@v4
     
-    - name: Install dependencies
+    - name: Install MinGW
       run: |
         sudo apt-get update
-        sudo apt-get install -y mingw-w64 mingw-w64-tools
+        sudo apt-get install -y mingw-w64
     
-    - name: Download raylib source
+    - name: Download raylib
       run: |
-        git clone https://github.com/raysan5/raylib.git
-        cd raylib
-        git checkout 4.5.0
+        wget https://github.com/raysan5/raylib/releases/download/4.5.0/raylib-4.5.0_win64_mingw-w64.zip
+        unzip raylib-4.5.0_win64_mingw-w64.zip
     
-    - name: Build raylib for Windows
+    - name: Build for Windows
       run: |
-        cd raylib/src
-        if [ "${{ matrix.platform }}" = "win32" ]; then
-          make PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC CC=i686-w64-mingw32-gcc
-        else
-          make PLATFORM=PLATFORM_DESKTOP RAYLIB_LIBTYPE=STATIC CC=x86_64-w64-mingw32-gcc
-        fi
-    
-    - name: Build game for Windows
-      run: |
-        if [ "${{ matrix.platform }}" = "win32" ]; then
-          i686-w64-mingw32-gcc -o minecraft.exe minecraft.c -I./raylib/src -L./raylib/src -lraylib -lm -lopengl32 -lgdi32 -lwinmm -static
-        else
-          x86_64-w64-mingw32-gcc -o minecraft.exe minecraft.c -I./raylib/src -L./raylib/src -lraylib -lm -lopengl32 -lgdi32 -lwinmm -static
-        fi
+        x86_64-w64-mingw32-g++ -o minecraft.exe minecraft.cpp \
+          -I./raylib-4.5.0_win64_mingw-w64/include \
+          -L./raylib-4.5.0_win64_mingw-w64/lib \
+          -lraylib -lopengl32 -lgdi32 -lwinmm -static
     
     - name: Upload Windows EXE
       uses: actions/upload-artifact@v4
       with:
-        name: minecraft-windows-${{ matrix.platform }}
+        name: minecraft-windows
         path: minecraft.exe
 
   build-linux:
@@ -72,7 +58,7 @@ jobs:
     
     - name: Build for Linux
       run: |
-        gcc -o minecraft-linux minecraft.c -lraylib -lm -lglfw -lGL -lX11 -lpthread -ldl -lrt
+        g++ -o minecraft-linux minecraft.cpp -lraylib -lm -lglfw -lGL -lX11 -lpthread -ldl -lrt
     
     - name: Upload Linux binary
       uses: actions/upload-artifact@v4
