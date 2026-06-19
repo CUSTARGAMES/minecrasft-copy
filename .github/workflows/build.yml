@@ -1,4 +1,4 @@
-name: Build Minecraft (Windows + Linux)
+name: Build Minecraft
 
 on:
   push:
@@ -35,33 +35,3 @@ jobs:
       with:
         name: minecraft-windows
         path: minecraft.exe
-
-  build-linux:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libglfw3-dev libgl1-mesa-dev libxi-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev
-    
-    - name: Install raylib
-      run: |
-        git clone https://github.com/raysan5/raylib.git
-        cd raylib
-        mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release ..
-        make -j$(nproc)
-        sudo make install
-    
-    - name: Build for Linux
-      run: |
-        g++ -o minecraft-linux minecraft.cpp -lraylib -lm -lglfw -lGL -lX11 -lpthread -ldl -lrt
-    
-    - name: Upload Linux binary
-      uses: actions/upload-artifact@v4
-      with:
-        name: minecraft-linux
-        path: minecraft-linux
