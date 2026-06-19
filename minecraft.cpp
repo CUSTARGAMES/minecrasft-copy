@@ -1,24 +1,22 @@
 // ============================================================
-//  MINECRAFT BEDROCK STYLE - C++ / Raylib (FIXED API)
+//  MINECRAFT - FULLY WORKING C++ / Raylib
 //  Compile: g++ -o minecraft.exe minecraft.cpp -lraylib -lopengl32 -lgdi32 -lwinmm
 // ============================================================
 
 #include "raylib.h"
-#include <vector>
-#include <map>
-#include <string>
 #include <cmath>
+#include <cstdlib>
+#include <ctime>
 
 // ============================================================
 //  CONSTANTS
 // ============================================================
 const int WORLD_SIZE = 32;
-const int BLOCK_SIZE = 1;
-const float GRAVITY = -25.0f;
-const float JUMP_SPEED = 8.0f;
-const float PLAYER_SPEED = 4.5f;
-const float PLAYER_HEIGHT = 1.62f;
-const float MOUSE_SENSITIVITY = 0.002f;
+const float GRAVITY = -20.0f;
+const float JUMP_SPEED = 7.0f;
+const float PLAYER_SPEED = 4.0f;
+const float PLAYER_HEIGHT = 1.8f;
+const float MOUSE_SENSITIVITY = 0.003f;
 
 // ============================================================
 //  BLOCK TYPES
@@ -26,160 +24,159 @@ const float MOUSE_SENSITIVITY = 0.002f;
 enum BlockType {
     AIR = 0,
     GRASS = 1,
-    STONE = 2
-};
-
-struct Block {
-    BlockType type;
-    bool active;
-    
-    Block() : type(AIR), active(false) {}
-    Block(BlockType t) : type(t), active(true) {}
+    STONE = 2,
+    DIRT = 3
 };
 
 // ============================================================
-//  WORLD CLASS
+//  TEXTURE MANAGER
 // ============================================================
-class World {
-public:
-    Block blocks[WORLD_SIZE][64][WORLD_SIZE];
-    Texture2D grassTex;
-    Texture2D stoneTex;
+Texture2D grassTex, stoneTex, dirtTex;
+bool texturesLoaded = false;
+
+void loadTextures() {
+    grassTex = LoadTexture("grass.png");
+    stoneTex = LoadTexture("stone.png");
+    dirtTex = LoadTexture("dirt.png");
     
-    World() {
-        // Load 16x16 textures
-        grassTex = LoadTexture("grass.png");
-        stoneTex = LoadTexture("stone.png");
-        
-        // Fallback textures if files missing
-        if (grassTex.id == 0) grassTex = createFallbackTexture(GREEN);
-        if (stoneTex.id == 0) stoneTex = createFallbackTexture(GRAY);
-        
-        // Set texture filter for pixel art (16x16)
+    // Check if textures loaded
+    if (grassTex.id == 0 || stoneTex.id == 0 || dirtTex.id == 0) {
+        texturesLoaded = false;
+        printf("ERROR: Failed to load textures! Using fallback colors.\n");
+        printf("Make sure grass.png, stone.png, and dirt.png are in the same folder.\n");
+    } else {
+        texturesLoaded = true;
         SetTextureFilter(grassTex, TEXTURE_FILTER_POINT);
         SetTextureFilter(stoneTex, TEXTURE_FILTER_POINT);
-        
-        generateWorld();
+        SetTextureFilter(dirtTex, TEXTURE_FILTER_POINT);
+        printf("Textures loaded successfully!\n");
     }
-    
-    ~World() {
-        UnloadTexture(grassTex);
-        UnloadTexture(stoneTex);
-    }
-    
-    void generateWorld() {
-        // Clear world
-        for (int x = 0; x < WORLD_SIZE; x++) {
-            for (int y = 0; y < 64; y++) {
-                for (int z = 0; z < WORLD_SIZE; z++) {
-                    blocks[x][y][z] = Block(AIR);
-                }
-            }
-        }
-        
-        // Flat world: grass on top, stone below
-        for (int x = 0; x < WORLD_SIZE; x++) {
-            for (int z = 0; z < WORLD_SIZE; z++) {
-                // Layer 0-2: Stone
-                blocks[x][0][z] = Block(STONE);
-                blocks[x][1][z] = Block(STONE);
-                blocks[x][2][z] = Block(STONE);
-                // Layer 3: Grass
-                blocks[x][3][z] = Block(GRASS);
-            }
-        }
-        
-        // Add a few stone blocks on surface for decoration
-        for (int i = 0; i < 15; i++) {
-            int x = rand() % WORLD_SIZE;
-            int z = rand() % WORLD_SIZE;
-            if (blocks[x][4][z].type == AIR) {
-                blocks[x][4][z] = Block(STONE);
-            }
-        }
-    }
-    
-    BlockType getBlock(int x, int y, int z) {
-        if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= 64 || z < 0 || z >= WORLD_SIZE)
-            return AIR;
-        return blocks[x][y][z].type;
-    }
-    
-    void setBlock(int x, int y, int z, BlockType type) {
-        if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= 64 || z < 0 || z >= WORLD_SIZE)
-            return;
-        blocks[x][y][z] = Block(type);
-    }
-    
-    bool isSolid(int x, int y, int z) {
-        return getBlock(x, y, z) != AIR;
-    }
-    
-    Color getBlockColor(BlockType type) {
-        switch(type) {
-            case GRASS: return (Color){80, 140, 60, 255};
-            case STONE: return (Color){128, 128, 128, 255};
-            default: return WHITE;
-        }
-    }
-    
-    void drawBlock(int x, int y, int z) {
-        BlockType type = getBlock(x, y, z);
-        if (type == AIR) return;
-        
-        Vector3 pos = {x + 0.5f, y + 0.5f, z + 0.5f};
-        
-        // Draw cube with color (texture workaround)
-        DrawCubeV(pos, (Vector3){1.0f, 1.0f, 1.0f}, getBlockColor(type));
-        
-        // Very light outline
-        DrawCubeWiresV(pos, (Vector3){1.0f, 1.0f, 1.0f}, (Color){0, 0, 0, 30});
-    }
-    
-    void drawWorld(Vector3 playerPos) {
-        int renderDist = 10;
-        int px = (int)floorf(playerPos.x);
-        int pz = (int)floorf(playerPos.z);
-        
-        for (int x = px - renderDist; x < px + renderDist; x++) {
-            for (int z = pz - renderDist; z < pz + renderDist; z++) {
-                if (x < 0 || x >= WORLD_SIZE || z < 0 || z >= WORLD_SIZE) continue;
-                
-                for (int y = 0; y < 8; y++) {
-                    BlockType type = getBlock(x, y, z);
-                    if (type == AIR) continue;
-                    
-                    // Check if block is visible
-                    bool visible = false;
-                    if (!isSolid(x-1, y, z)) visible = true;
-                    if (!isSolid(x+1, y, z)) visible = true;
-                    if (!isSolid(x, y-1, z)) visible = true;
-                    if (!isSolid(x, y+1, z)) visible = true;
-                    if (!isSolid(x, y, z-1)) visible = true;
-                    if (!isSolid(x, y, z+1)) visible = true;
-                    
-                    if (visible) {
-                        drawBlock(x, y, z);
-                    }
-                }
-            }
-        }
-    }
-    
-private:
-    Texture2D createFallbackTexture(Color color) {
-        Image img = GenImageColor(16, 16, color);
-        Texture2D tex = LoadTextureFromImage(img);
-        UnloadImage(img);
-        return tex;
-    }
-};
+}
 
 // ============================================================
-//  PLAYER CLASS
+//  WORLD DATA
 // ============================================================
-class Player {
-public:
+BlockType world[WORLD_SIZE][64][WORLD_SIZE];
+
+void generateWorld() {
+    // Clear world
+    for (int x = 0; x < WORLD_SIZE; x++) {
+        for (int y = 0; y < 64; y++) {
+            for (int z = 0; z < WORLD_SIZE; z++) {
+                world[x][y][z] = AIR;
+            }
+        }
+    }
+    
+    // Flat world: Grass on top, stone underneath
+    for (int x = 0; x < WORLD_SIZE; x++) {
+        for (int z = 0; z < WORLD_SIZE; z++) {
+            // Layer 0-2: Stone
+            world[x][0][z] = STONE;
+            world[x][1][z] = STONE;
+            world[x][2][z] = STONE;
+            // Layer 3: Grass
+            world[x][3][z] = GRASS;
+        }
+    }
+    
+    // Add some stone decorations on surface
+    for (int i = 0; i < 20; i++) {
+        int x = rand() % WORLD_SIZE;
+        int z = rand() % WORLD_SIZE;
+        if (world[x][4][z] == AIR) {
+            world[x][4][z] = STONE;
+        }
+    }
+}
+
+BlockType getBlock(int x, int y, int z) {
+    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= 64 || z < 0 || z >= WORLD_SIZE)
+        return AIR;
+    return world[x][y][z];
+}
+
+void setBlock(int x, int y, int z, BlockType type) {
+    if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= 64 || z < 0 || z >= WORLD_SIZE)
+        return;
+    world[x][y][z] = type;
+}
+
+bool isSolid(int x, int y, int z) {
+    return getBlock(x, y, z) != AIR;
+}
+
+// ============================================================
+//  DRAW BLOCK WITH TEXTURE
+// ============================================================
+void drawTexturedBlock(int x, int y, int z, BlockType type) {
+    Vector3 pos = {x + 0.5f, y + 0.5f, z + 0.5f};
+    
+    // Draw colored cube first (fallback)
+    Color color;
+    switch(type) {
+        case GRASS: color = (Color){80, 160, 60, 255}; break;
+        case STONE: color = (Color){128, 128, 128, 255}; break;
+        case DIRT: color = (Color){115, 90, 60, 255}; break;
+        default: color = WHITE;
+    }
+    
+    // If textures are loaded, use them
+    if (texturesLoaded) {
+        // Draw each face with texture
+        Texture2D tex;
+        switch(type) {
+            case GRASS: tex = grassTex; break;
+            case STONE: tex = stoneTex; break;
+            case DIRT: tex = dirtTex; break;
+            default: tex = grassTex;
+        }
+        
+        // Draw cube with texture (top, bottom, sides)
+        DrawCubeTexture(tex, pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
+    } else {
+        // Fallback: just colored cubes
+        DrawCubeV(pos, (Vector3){1.0f, 1.0f, 1.0f}, color);
+    }
+    
+    // Outline
+    DrawCubeWiresV(pos, (Vector3){1.0f, 1.0f, 1.0f}, (Color){0, 0, 0, 30});
+}
+
+void drawWorld(Vector3 playerPos) {
+    int renderDist = 10;
+    int px = (int)floorf(playerPos.x);
+    int pz = (int)floorf(playerPos.z);
+    
+    for (int x = px - renderDist; x < px + renderDist; x++) {
+        for (int z = pz - renderDist; z < pz + renderDist; z++) {
+            if (x < 0 || x >= WORLD_SIZE || z < 0 || z >= WORLD_SIZE) continue;
+            
+            for (int y = 0; y < 8; y++) {
+                BlockType type = getBlock(x, y, z);
+                if (type == AIR) continue;
+                
+                // Check if block is visible (not fully surrounded)
+                bool visible = false;
+                if (!isSolid(x-1, y, z)) visible = true;
+                if (!isSolid(x+1, y, z)) visible = true;
+                if (!isSolid(x, y-1, z)) visible = true;
+                if (!isSolid(x, y+1, z)) visible = true;
+                if (!isSolid(x, y, z-1)) visible = true;
+                if (!isSolid(x, y, z+1)) visible = true;
+                
+                if (visible) {
+                    drawTexturedBlock(x, y, z, type);
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+//  PLAYER
+// ============================================================
+struct Player {
     Vector3 position;
     Vector3 velocity;
     float yaw;
@@ -197,136 +194,148 @@ public:
         cursorLocked = false;
         flying = false;
     }
-    
-    void update(float dt, World& world) {
-        // Mouse look
-        if (cursorLocked) {
-            Vector2 mouseDelta = GetMouseDelta();
-            yaw -= mouseDelta.x * MOUSE_SENSITIVITY;
-            pitch -= mouseDelta.y * MOUSE_SENSITIVITY;
-            pitch = fmaxf(-1.5f, fminf(1.5f, pitch));
-        }
-        
-        // Movement
-        Vector3 forward = {-sinf(yaw), 0, -cosf(yaw)};
-        Vector3 right = {cosf(yaw), 0, -sinf(yaw)};
-        
-        Vector3 moveDir = {0, 0, 0};
-        if (IsKeyDown(KEY_W)) { moveDir.x += forward.x; moveDir.z += forward.z; }
-        if (IsKeyDown(KEY_S)) { moveDir.x -= forward.x; moveDir.z -= forward.z; }
-        if (IsKeyDown(KEY_A)) { moveDir.x -= right.x; moveDir.z -= right.z; }
-        if (IsKeyDown(KEY_D)) { moveDir.x += right.x; moveDir.z += right.z; }
-        
-        if (moveDir.x != 0 || moveDir.z != 0) {
-            float len = sqrtf(moveDir.x * moveDir.x + moveDir.z * moveDir.z);
-            moveDir.x /= len;
-            moveDir.z /= len;
-        }
-        
-        float speed = IsKeyDown(KEY_LEFT_SHIFT) ? 6.0f : PLAYER_SPEED;
-        
-        // Flying mode
-        if (IsKeyPressed(KEY_F)) {
-            flying = !flying;
-        }
-        
-        if (flying) {
-            if (IsKeyDown(KEY_SPACE)) moveDir.y += 1.0f;
-            if (IsKeyDown(KEY_LEFT_CONTROL)) moveDir.y -= 1.0f;
-            
-            position.x += moveDir.x * speed * dt;
-            position.y += moveDir.y * speed * dt;
-            position.z += moveDir.z * speed * dt;
-            
-            velocity.y = 0;
-            onGround = false;
-        } else {
-            // Jump
-            if (IsKeyPressed(KEY_SPACE) && onGround) {
-                velocity.y = JUMP_SPEED;
-                onGround = false;
-            }
-            
-            // Gravity
-            velocity.y += GRAVITY * dt;
-            if (velocity.y < -20.0f) velocity.y = -20.0f;
-            
-            // Collision - X
-            float newX = position.x + moveDir.x * speed * dt;
-            int bx = (int)floorf(newX);
-            int bz = (int)floorf(position.z);
-            int by = (int)floorf(position.y);
-            int headY = (int)floorf(position.y + PLAYER_HEIGHT);
-            
-            bool canMoveX = true;
-            if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
-                if (world.isSolid(bx, by, bz)) canMoveX = false;
-                if (world.isSolid(bx, headY, bz)) canMoveX = false;
-            }
-            if (canMoveX) position.x = newX;
-            
-            // Collision - Z
-            float newZ = position.z + moveDir.z * speed * dt;
-            bx = (int)floorf(position.x);
-            bz = (int)floorf(newZ);
-            by = (int)floorf(position.y);
-            headY = (int)floorf(position.y + PLAYER_HEIGHT);
-            
-            bool canMoveZ = true;
-            if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
-                if (world.isSolid(bx, by, bz)) canMoveZ = false;
-                if (world.isSolid(bx, headY, bz)) canMoveZ = false;
-            }
-            if (canMoveZ) position.z = newZ;
-            
-            // Collision - Y
-            float newY = position.y + velocity.y * dt;
-            bx = (int)floorf(position.x);
-            bz = (int)floorf(position.z);
-            by = (int)floorf(newY);
-            headY = (int)floorf(newY + PLAYER_HEIGHT);
-            
-            onGround = false;
-            bool canMoveY = true;
-            if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
-                if (world.isSolid(bx, by, bz)) {
-                    canMoveY = false;
-                    if (velocity.y < 0) {
-                        onGround = true;
-                        velocity.y = 0;
-                        position.y = by + 0.5f;
-                    }
-                }
-                if (world.isSolid(bx, headY, bz)) {
-                    canMoveY = false;
-                    if (velocity.y > 0) velocity.y = 0;
-                }
-            }
-            if (canMoveY) position.y = newY;
-        }
-        
-        // Keep in bounds
-        position.x = fmaxf(0.5f, fminf(WORLD_SIZE - 0.5f, position.x));
-        position.z = fmaxf(0.5f, fminf(WORLD_SIZE - 0.5f, position.z));
-    }
 };
+
+void updatePlayer(Player& player, float dt) {
+    // Mouse look
+    if (player.cursorLocked) {
+        Vector2 mouseDelta = GetMouseDelta();
+        player.yaw -= mouseDelta.x * MOUSE_SENSITIVITY;
+        player.pitch -= mouseDelta.y * MOUSE_SENSITIVITY;
+        player.pitch = fmaxf(-1.5f, fminf(1.5f, player.pitch));
+    }
+    
+    // Movement direction
+    Vector3 forward = {-sinf(player.yaw), 0, -cosf(player.yaw)};
+    Vector3 right = {cosf(player.yaw), 0, -sinf(player.yaw)};
+    
+    Vector3 moveDir = {0, 0, 0};
+    if (IsKeyDown(KEY_W)) { moveDir.x += forward.x; moveDir.z += forward.z; }
+    if (IsKeyDown(KEY_S)) { moveDir.x -= forward.x; moveDir.z -= forward.z; }
+    if (IsKeyDown(KEY_A)) { moveDir.x -= right.x; moveDir.z -= right.z; }
+    if (IsKeyDown(KEY_D)) { moveDir.x += right.x; moveDir.z += right.z; }
+    
+    if (moveDir.x != 0 || moveDir.z != 0) {
+        float len = sqrtf(moveDir.x * moveDir.x + moveDir.z * moveDir.z);
+        moveDir.x /= len;
+        moveDir.z /= len;
+    }
+    
+    float speed = IsKeyDown(KEY_LEFT_SHIFT) ? 6.0f : PLAYER_SPEED;
+    
+    // Toggle flying
+    if (IsKeyPressed(KEY_F)) {
+        player.flying = !player.flying;
+    }
+    
+    if (player.flying) {
+        // Flying mode
+        if (IsKeyDown(KEY_SPACE)) moveDir.y += 1.0f;
+        if (IsKeyDown(KEY_LEFT_CONTROL)) moveDir.y -= 1.0f;
+        
+        player.position.x += moveDir.x * speed * dt;
+        player.position.y += moveDir.y * speed * dt;
+        player.position.z += moveDir.z * speed * dt;
+        
+        player.velocity.y = 0;
+        player.onGround = false;
+    } else {
+        // Normal physics
+        // Jump
+        if (IsKeyPressed(KEY_SPACE) && player.onGround) {
+            player.velocity.y = JUMP_SPEED;
+            player.onGround = false;
+        }
+        
+        // Gravity
+        player.velocity.y += GRAVITY * dt;
+        if (player.velocity.y < -20.0f) player.velocity.y = -20.0f;
+        
+        // --- Collision Detection ---
+        // X movement
+        float newX = player.position.x + moveDir.x * speed * dt;
+        int bx = (int)floorf(newX + 0.3f);
+        int bz = (int)floorf(player.position.z + 0.3f);
+        int by = (int)floorf(player.position.y);
+        int headY = (int)floorf(player.position.y + PLAYER_HEIGHT);
+        
+        bool canMoveX = true;
+        if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
+            if (isSolid(bx, by, bz)) canMoveX = false;
+            if (isSolid(bx, headY, bz)) canMoveX = false;
+        }
+        if (canMoveX) player.position.x = newX;
+        
+        // Z movement
+        float newZ = player.position.z + moveDir.z * speed * dt;
+        bx = (int)floorf(player.position.x + 0.3f);
+        bz = (int)floorf(newZ + 0.3f);
+        by = (int)floorf(player.position.y);
+        headY = (int)floorf(player.position.y + PLAYER_HEIGHT);
+        
+        bool canMoveZ = true;
+        if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
+            if (isSolid(bx, by, bz)) canMoveZ = false;
+            if (isSolid(bx, headY, bz)) canMoveZ = false;
+        }
+        if (canMoveZ) player.position.z = newZ;
+        
+        // Y movement (gravity)
+        float newY = player.position.y + player.velocity.y * dt;
+        bx = (int)floorf(player.position.x + 0.3f);
+        bz = (int)floorf(player.position.z + 0.3f);
+        by = (int)floorf(newY);
+        headY = (int)floorf(newY + PLAYER_HEIGHT);
+        
+        player.onGround = false;
+        bool canMoveY = true;
+        if (bx >= 0 && bx < WORLD_SIZE && bz >= 0 && bz < WORLD_SIZE) {
+            // Check feet
+            if (isSolid(bx, by, bz)) {
+                canMoveY = false;
+                if (player.velocity.y < 0) {
+                    player.onGround = true;
+                    player.velocity.y = 0;
+                    player.position.y = by + 0.5f;
+                }
+            }
+            // Check head
+            if (isSolid(bx, headY, bz)) {
+                canMoveY = false;
+                if (player.velocity.y > 0) {
+                    player.velocity.y = 0;
+                }
+            }
+        }
+        if (canMoveY) player.position.y = newY;
+    }
+    
+    // Keep in bounds
+    player.position.x = fmaxf(0.5f, fminf(WORLD_SIZE - 0.5f, player.position.x));
+    player.position.z = fmaxf(0.5f, fminf(WORLD_SIZE - 0.5f, player.position.z));
+}
 
 // ============================================================
 //  MAIN
 // ============================================================
 int main() {
+    srand(time(NULL));
+    
     // Init window
     const int screenWidth = 1280;
     const int screenHeight = 720;
-    InitWindow(screenWidth, screenHeight, "⛏️ Minecraft - 16x16 Textures");
+    InitWindow(screenWidth, screenHeight, "⛏️ Minecraft - C++ Edition");
     
-    // Cursor
-    DisableCursor();
+    // Load textures
+    loadTextures();
     
-    // Create world and player
-    World world;
+    // Generate world
+    generateWorld();
+    
+    // Create player
     Player player;
     player.cursorLocked = true;
+    DisableCursor();
     
     // Camera
     Camera3D camera = {0};
@@ -334,10 +343,10 @@ int main() {
     camera.fovy = 70;
     camera.projection = CAMERA_PERSPECTIVE;
     
-    // Target block
+    // Block interaction
+    BlockType selectedBlock = GRASS;
     Vector3 targetBlock = {0, 0, 0};
     bool hasTarget = false;
-    BlockType selectedBlock = GRASS;
     
     // Main loop
     SetTargetFPS(60);
@@ -346,7 +355,7 @@ int main() {
         float dt = GetFrameTime();
         
         // Update player
-        player.update(dt, world);
+        updatePlayer(player, dt);
         
         // Camera follows player
         camera.position = player.position;
@@ -357,11 +366,11 @@ int main() {
             player.position.z - cosf(player.yaw) * cosf(player.pitch)
         };
         
-        // Block selection (1=grass, 2=stone)
+        // Block selection
         if (IsKeyPressed(KEY_ONE)) selectedBlock = GRASS;
         if (IsKeyPressed(KEY_TWO)) selectedBlock = STONE;
         
-        // Raycast for block interaction (manual implementation)
+        // Raycast for block interaction
         hasTarget = false;
         Vector3 rayStart = camera.position;
         Vector3 rayDir = {
@@ -385,16 +394,16 @@ int main() {
             int bz = (int)floorf(check.z);
             
             if (bx >= 0 && bx < WORLD_SIZE && by >= 0 && by < 64 && bz >= 0 && bz < WORLD_SIZE) {
-                if (world.getBlock(bx, by, bz) != AIR) {
+                if (getBlock(bx, by, bz) != AIR) {
                     targetBlock = {bx + 0.5f, by + 0.5f, bz + 0.5f};
                     hasTarget = true;
                     
-                    // Break block
+                    // Break block (left click)
                     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-                        world.setBlock(bx, by, bz, AIR);
+                        setBlock(bx, by, bz, AIR);
                     }
                     
-                    // Place block
+                    // Place block (right click)
                     if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
                         Vector3 placePos = {
                             check.x + rayDir.x * 0.1f,
@@ -406,8 +415,8 @@ int main() {
                         int pz = (int)floorf(placePos.z);
                         
                         if (px >= 0 && px < WORLD_SIZE && py >= 0 && py < 64 && pz >= 0 && pz < WORLD_SIZE) {
-                            if (world.getBlock(px, py, pz) == AIR) {
-                                world.setBlock(px, py, pz, selectedBlock);
+                            if (getBlock(px, py, pz) == AIR) {
+                                setBlock(px, py, pz, selectedBlock);
                             }
                         }
                     }
@@ -428,14 +437,16 @@ int main() {
             DisableCursor();
         }
         
-        // Draw
+        // ============================================================
+        //  RENDER
+        // ============================================================
         BeginDrawing();
         ClearBackground((Color){127, 155, 179, 255});
         
         BeginMode3D(camera);
         
         // Draw world
-        world.drawWorld(player.position);
+        drawWorld(player.position);
         
         // Draw target highlight
         if (hasTarget) {
@@ -449,16 +460,16 @@ int main() {
         DrawRectangle(screenWidth/2 - 10, screenHeight/2 - 2, 20, 4, (Color){255, 255, 255, 150});
         
         // HUD
-        DrawText("MINECRAFT - 16x16 TEXTURES", 10, 10, 20, (Color){255, 255, 255, 150});
+        DrawText("MINECRAFT - C++", 10, 10, 20, (Color){255, 255, 255, 150});
         DrawText(TextFormat("FPS: %d", GetFPS()), 10, 35, 20, (Color){255, 255, 255, 100});
         
-        // Controls
-        DrawText("WASD: Walk | SPACE: Jump | F: Fly", 10, screenHeight - 70, 20, (Color){200, 210, 220, 200});
-        DrawText("Left Click: Break | Right Click: Place", 10, screenHeight - 45, 20, (Color){200, 210, 220, 200});
-        DrawText("1: Grass | 2: Stone", 10, screenHeight - 20, 20, (Color){200, 210, 220, 200});
+        // Controls info
+        DrawText("WASD: Walk | SPACE: Jump | F: Fly | Shift: Sprint", 10, screenHeight - 80, 20, (Color){200, 210, 220, 200});
+        DrawText("Left Click: Break | Right Click: Place", 10, screenHeight - 55, 20, (Color){200, 210, 220, 200});
+        DrawText("1: Grass | 2: Stone", 10, screenHeight - 30, 20, (Color){200, 210, 220, 200});
         
-        // Selected block indicator
-        const char* blockNames[] = {"", "GRASS", "STONE"};
+        // Selected block
+        const char* blockNames[] = {"AIR", "GRASS", "STONE", "DIRT"};
         DrawText(TextFormat("Selected: %s", blockNames[selectedBlock]), screenWidth - 200, 10, 20, (Color){255, 255, 255, 200});
         
         // Flying indicator
@@ -466,9 +477,21 @@ int main() {
             DrawText("✈️ FLYING", screenWidth/2 - 50, 60, 20, (Color){255, 255, 100, 200});
         }
         
+        // Texture status
+        if (!texturesLoaded) {
+            DrawText("⚠️ Textures not found! Using colors.", screenWidth/2 - 150, screenHeight - 150, 20, (Color){255, 200, 100, 200});
+        }
+        
         EndDrawing();
     }
     
+    // Cleanup
+    if (texturesLoaded) {
+        UnloadTexture(grassTex);
+        UnloadTexture(stoneTex);
+        UnloadTexture(dirtTex);
+    }
     CloseWindow();
+    
     return 0;
 }
