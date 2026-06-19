@@ -1,5 +1,5 @@
 // ============================================================
-//  MINECRAFT BEDROCK STYLE - C++ / Raylib (16x16 Textures)
+//  MINECRAFT BEDROCK STYLE - C++ / Raylib (FIXED API)
 //  Compile: g++ -o minecraft.exe minecraft.cpp -lraylib -lopengl32 -lgdi32 -lwinmm
 // ============================================================
 
@@ -115,11 +115,11 @@ public:
         return getBlock(x, y, z) != AIR;
     }
     
-    Texture2D getTexture(BlockType type) {
+    Color getBlockColor(BlockType type) {
         switch(type) {
-            case GRASS: return grassTex;
-            case STONE: return stoneTex;
-            default: return grassTex;
+            case GRASS: return (Color){80, 140, 60, 255};
+            case STONE: return (Color){128, 128, 128, 255};
+            default: return WHITE;
         }
     }
     
@@ -129,11 +129,11 @@ public:
         
         Vector3 pos = {x + 0.5f, y + 0.5f, z + 0.5f};
         
-        // Draw textured cube with 16x16 texture
-        DrawCubeTexture(getTexture(type), pos, (Vector3){1.0f, 1.0f, 1.0f}, WHITE);
+        // Draw cube with color (texture workaround)
+        DrawCubeV(pos, (Vector3){1.0f, 1.0f, 1.0f}, getBlockColor(type));
         
         // Very light outline
-        DrawCubeWiresV(pos, (Vector3){1.0f, 1.0f, 1.0f}, (Color){0, 0, 0, 20});
+        DrawCubeWiresV(pos, (Vector3){1.0f, 1.0f, 1.0f}, (Color){0, 0, 0, 30});
     }
     
     void drawWorld(Vector3 playerPos) {
@@ -361,14 +361,25 @@ int main() {
         if (IsKeyPressed(KEY_ONE)) selectedBlock = GRASS;
         if (IsKeyPressed(KEY_TWO)) selectedBlock = STONE;
         
-        // Raycast for block interaction
+        // Raycast for block interaction (manual implementation)
         hasTarget = false;
         Vector3 rayStart = camera.position;
-        Vector3 rayDir = Vector3Subtract(camera.target, camera.position);
-        rayDir = Vector3Normalize(rayDir);
+        Vector3 rayDir = {
+            camera.target.x - camera.position.x,
+            camera.target.y - camera.position.y,
+            camera.target.z - camera.position.z
+        };
+        float len = sqrtf(rayDir.x * rayDir.x + rayDir.y * rayDir.y + rayDir.z * rayDir.z);
+        rayDir.x /= len;
+        rayDir.y /= len;
+        rayDir.z /= len;
         
         for (float d = 0.1f; d < 6.0f; d += 0.05f) {
-            Vector3 check = Vector3Add(rayStart, Vector3Scale(rayDir, d));
+            Vector3 check = {
+                rayStart.x + rayDir.x * d,
+                rayStart.y + rayDir.y * d,
+                rayStart.z + rayDir.z * d
+            };
             int bx = (int)floorf(check.x);
             int by = (int)floorf(check.y);
             int bz = (int)floorf(check.z);
@@ -385,7 +396,11 @@ int main() {
                     
                     // Place block
                     if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-                        Vector3 placePos = Vector3Add(check, Vector3Scale(rayDir, 0.1f));
+                        Vector3 placePos = {
+                            check.x + rayDir.x * 0.1f,
+                            check.y + rayDir.y * 0.1f,
+                            check.z + rayDir.z * 0.1f
+                        };
                         int px = (int)floorf(placePos.x);
                         int py = (int)floorf(placePos.y);
                         int pz = (int)floorf(placePos.z);
